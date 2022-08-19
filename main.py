@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 
 import requests
-import sys
 import re
+import os
+from pathlib import Path
 
-def parse_args():
-    options = {}
-    for arg in sys.argv:
-        if arg.startswith('--'):
-            arg = arg[2:].split('=')
-            options[arg[0]] = arg[1]
-    return options
+def get_torrents(query):
+    response = requests.get(f"https://nyaa.si/?q=${query}&s=seeders&o=desc")
+    if not response.ok:
+        print('error: couldn\'t download torrent list - aborting')
+        exit(1)
 
-def parse_nyaa_response(response):
     torrents = []
 
     text    = response.text.replace('\n', '').replace('\t', '')
@@ -28,27 +26,64 @@ def parse_nyaa_response(response):
         i = m.find('title="', i)
         torrent['name'] = m[i+7 : m.find('"', i+7)]
 
-        print(m[i:i+10])
-        i = m.find('<td class="', i)
-        i = m.find('<td class="', i)
-        i = m.find('>', i)
-
         torrents.append(torrent)
 
     return torrents
 
-def interactive():
-    # query = input('query: ')
-    query = 'jujutsu kaisen'
-    # you probably want the one with the most seeders
-    response = requests.get(f"https://nyaa.si/?q=${query}&s=seeders&o=desc")
-    torrents = parse_nyaa_response(response)
-    # for torrent in torrents:
-        # print(f"{torrent['nid']}: {torrent['name']}")
+def download_torrent(nid):
+    response = requests.get(f"https://nyaa.si/download/{nid}.torrent")
+    if not response.ok:
+        print('error: couldn\'t download torrent file - aborting')
+        exit(1)
+
+    # return raw bytes
+    return response.content
 
 def run():
-    options = parse_args()
-    interactive()
+    query = input('query: ')
+
+    # you probably want the one with the most seeders
+    torrents = get_torrents(query)
+
+    i = 0
+    selections = []
+    while True:
+        for j in range(i, min(i + 10, len(torrents))):
+            print(f"{j}: {torrents[j]['name']}")
+
+        c = input('[numbers] / (c)ontinue / (f)inish: ')
+
+        if c == 'c':
+            i += 10
+            if i >= len(torrents):
+                print('error: no selection made - aborting')
+                exit(1)
+        elif c == 'f':
+            break
+        else:
+            try:
+                selections += ([int(x) for x in c.split(' ')])
+                print(f"selection updated (have {selections})")
+            except:
+                print('warning: number list wrong - try again')
+
+    for selection in selections:
+        print(f"processing {torrents[selection]['name']}...")
+        nid = torrents[selection]['nid']
+        torrent_url = f"https://nyaa.si/view/{nid}"
+        torrent = download_torrent(torrents[selection]['nid'])
+        with open(f"{nid}.torrent", 'wb') as file:
+            file.write(torrent)
+
+        d = Path(__file__).resolve().parent.joinpath('downloads')
+        Path(d).mkdir(exist_ok=True)
+        # we are good people and seed
+        os.system(f"transmission-remote -a {nid}.torrent -gsr 5 -w {d}")
+        print('torrent launched')
+        os.system(f"rm {nid}.torrent")
+
+    print("finished!")
+
 
 if __name__ == '__main__':
     run()
